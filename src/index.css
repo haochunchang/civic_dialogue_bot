@@ -1,0 +1,60 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600&display=swap');
+
+:root {
+  --primary-color: #2563eb;
+  --primary-hover: #1d4ed8;
+  --bg-color: #f5f5f5;
+  --text-main: #222;
+  --text-secondary: #666;
+  --border-color: #e0e0e0;
+  --white: #ffffff;
+  --error-bg: #fef2f2;
+  --error-border: #fca5a5;
+  --error-text: #dc2626;
+  --success-bg: #f8fafc;
+}
+
+body {
+  margin: 0;
+  font-family: "Noto Sans TC", system-ui, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+textarea::placeholder {
+  color: #999;
+}
+
+/* Utilities */
+.container {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.card {
+  background: var(--white);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Animations */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  animation: spin 0.8s linear infinite;
+}
