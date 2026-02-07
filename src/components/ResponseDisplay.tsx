@@ -1,21 +1,47 @@
 import React from 'react';
 import { Copy } from 'lucide-react';
+import type { FactCheckResult } from '../types';
+import EvidenceSection from './EvidenceSection';
 
 interface ResponseDisplayProps {
-    response: string | null;
+    response: FactCheckResult | null;
     isLoading: boolean;
 }
 
 const ResponseDisplay: React.FC<ResponseDisplayProps> = ({ response, isLoading }) => {
     const copyToClipboard = () => {
-        if (response) {
-            // Convert to plain text, putting URLs in parens
-            const plainText = response.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1（$2）');
+        if (!response) return;
+
+        if (response.rawMarkdown) {
+            const plainText = response.rawMarkdown.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1（$2）');
             navigator.clipboard.writeText(plainText);
+            return;
         }
+
+        const lines: string[] = [];
+        if (response.summary) lines.push(response.summary, '');
+
+        if (response.supporting.length > 0) {
+            lines.push('【支持證據】');
+            response.supporting.forEach(e => {
+                const source = e.sourceUrl ? `（${e.sourceUrl}）` : '';
+                lines.push(`• ${e.fact}${source}`);
+            });
+            lines.push('');
+        }
+
+        if (response.opposing.length > 0) {
+            lines.push('【反對證據】');
+            response.opposing.forEach(e => {
+                const source = e.sourceUrl ? `（${e.sourceUrl}）` : '';
+                lines.push(`• ${e.fact}${source}`);
+            });
+        }
+
+        navigator.clipboard.writeText(lines.join('\n'));
     };
 
-    const renderContent = (text: string) => {
+    const renderFallbackContent = (text: string) => {
         if (!text) return null;
 
         const lines = text.split('\n');
@@ -23,18 +49,15 @@ const ResponseDisplay: React.FC<ResponseDisplayProps> = ({ response, isLoading }
         return lines.map((line, index) => {
             if (!line.trim()) return <br key={index} />;
 
-            // Process Markdown links [text](url)
             let processed = line.replace(
                 /\[([^\]]+)\]\(([^)]+)\)/g,
-                (match, linkText, url) => {
+                (_match, linkText, url) => {
                     return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color: var(--primary-color); text-decoration: underline; text-underline-offset: 2px;">${linkText}</a>`;
                 }
             );
 
-            // Process Bold **text**
             processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 
-            // Process bare URLs
             processed = processed.replace(
                 /(?<!href=")(https?:\/\/[^\s<]+)/g,
                 '<a href="$1" target="_blank" rel="noopener noreferrer" style="color: var(--primary-color); text-decoration: underline; word-break: break-all;">$1</a>'
@@ -82,6 +105,10 @@ const ResponseDisplay: React.FC<ResponseDisplayProps> = ({ response, isLoading }
 
     if (!response) return null;
 
+    const sourceCount = response.rawMarkdown
+        ? 0
+        : response.supporting.filter(e => e.sourceUrl).length + response.opposing.filter(e => e.sourceUrl).length;
+
     return (
         <div style={{
             background: '#fff',
@@ -98,7 +125,7 @@ const ResponseDisplay: React.FC<ResponseDisplayProps> = ({ response, isLoading }
                 background: '#fafafa',
             }}>
                 <span style={{ fontSize: '14px', fontWeight: 500 }}>
-                    📋 回覆內容
+                    {response.rawMarkdown ? '📋 回覆內容' : '📋 查核結果'}
                 </span>
                 <button
                     onClick={copyToClipboard}
@@ -118,21 +145,54 @@ const ResponseDisplay: React.FC<ResponseDisplayProps> = ({ response, isLoading }
                     <Copy size={14} /> 複製
                 </button>
             </div>
-            <div style={{
-                padding: '16px',
-                fontSize: '14px',
-                lineHeight: 1.8,
-            }}>
-                {renderContent(response)}
+
+            <div style={{ padding: '16px', fontSize: '14px', lineHeight: 1.8 }}>
+                {response.rawMarkdown ? (
+                    renderFallbackContent(response.rawMarkdown)
+                ) : (
+                    <>
+                        {response.summary && (
+                            <div style={{
+                                padding: '12px 16px',
+                                background: '#f8fafc',
+                                borderRadius: '6px',
+                                marginBottom: '16px',
+                                fontSize: '14px',
+                                lineHeight: 1.7,
+                                borderLeft: '3px solid var(--primary-color)',
+                            }}>
+                                {response.summary}
+                            </div>
+                        )}
+
+                        <EvidenceSection
+                            title="支持證據"
+                            icon="✅"
+                            evidence={response.supporting}
+                            accentType="supporting"
+                        />
+
+                        <EvidenceSection
+                            title="反對證據"
+                            icon="⚠️"
+                            evidence={response.opposing}
+                            accentType="opposing"
+                        />
+                    </>
+                )}
             </div>
+
             <div style={{
                 padding: '12px 16px',
                 borderTop: '1px solid var(--border-color)',
                 background: 'var(--success-bg)',
                 fontSize: '12px',
                 color: 'var(--text-secondary)',
+                display: 'flex',
+                justifyContent: 'space-between',
             }}>
-                💡 點擊藍色連結可查看原始來源
+                <span>💡 點擊藍色連結可查看原始來源</span>
+                {sourceCount > 0 && <span>📎 {sourceCount} 個來源</span>}
             </div>
         </div>
     );

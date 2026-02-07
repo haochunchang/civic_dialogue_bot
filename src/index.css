@@ -12,6 +12,12 @@
   --error-border: #fca5a5;
   --error-text: #dc2626;
   --success-bg: #f8fafc;
+  --supporting-bg: #f0fdf4;
+  --supporting-border: #86efac;
+  --supporting-text: #166534;
+  --opposing-bg: #fff7ed;
+  --opposing-border: #fdba74;
+  --opposing-text: #9a3412;
 }
 
 body {

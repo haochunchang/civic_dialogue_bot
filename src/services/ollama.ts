@@ -1,4 +1,6 @@
 /// <reference types="vite/client" />
+import type { SourceEvidence, FactCheckResult } from '../types';
+
 export interface OllamaResponse {
     model: string;
     created_at: string;
@@ -17,7 +19,7 @@ export interface OllamaResponse {
 
 const TAVILY_API_URL = 'https://api.tavily.com/search';
 
-async function performWebSearch(query: string): Promise<string> {
+export async function performWebSearch(query: string): Promise<string> {
     const apiKey = import.meta.env.VITE_TAVILY_API_KEY;
     if (!apiKey || apiKey === 'your_tavily_api_key_here') {
         throw new Error('Tavily API Key 未設定。請在 .env 檔案中設定 VITE_TAVILY_API_KEY。');
@@ -35,7 +37,7 @@ async function performWebSearch(query: string): Promise<string> {
             query: query,
             search_depth: 'smart',
             include_answer: true,
-            max_results: 5,
+            max_results: 8,
         }),
     });
 
@@ -57,7 +59,79 @@ async function performWebSearch(query: string): Promise<string> {
     return JSON.stringify(results);
 }
 
-export const checkFacts = async (postContent: string): Promise<string> => {
+const LINK_REGEX = /\[([^\]]+)\]\(([^)]+)\)/g;
+
+export function parseFactCheckResponse(raw: string): FactCheckResult {
+    const hasSupportingMarker = raw.includes('[SUPPORTING]');
+    const hasOpposingMarker = raw.includes('[OPPOSING]');
+
+    if (!hasSupportingMarker && !hasOpposingMarker) {
+        return {
+            summary: '',
+            supporting: [],
+            opposing: [],
+            rawMarkdown: raw,
+        };
+    }
+
+    let summary = '';
+    const summaryMatch = raw.match(/\[SUMMARY\]([\s\S]*?)(?=\[SUPPORTING\]|\[OPPOSING\]|\[END\]|$)/);
+    if (summaryMatch) {
+        summary = summaryMatch[1].trim();
+    }
+
+    const supporting = extractEvidence(raw, '[SUPPORTING]', '[OPPOSING]');
+    const opposing = extractEvidence(raw, '[OPPOSING]', '[END]');
+
+    if (supporting.length === 0 && opposing.length === 0) {
+        return {
+            summary: '',
+            supporting: [],
+            opposing: [],
+            rawMarkdown: raw,
+        };
+    }
+
+    return { summary, supporting, opposing };
+}
+
+function extractEvidence(raw: string, startMarker: string, endMarker: string): SourceEvidence[] {
+    const startIdx = raw.indexOf(startMarker);
+    if (startIdx === -1) return [];
+
+    const afterStart = raw.substring(startIdx + startMarker.length);
+    const endIdx = afterStart.indexOf(endMarker);
+    const section = endIdx !== -1 ? afterStart.substring(0, endIdx) : afterStart;
+
+    const evidence: SourceEvidence[] = [];
+    const lines = section.split('\n');
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('[')) continue;
+
+        const bulletContent = trimmed.replace(/^[•\-\d.]\s*/, '');
+        if (!bulletContent) continue;
+
+        const linkMatch = LINK_REGEX.exec(bulletContent);
+        LINK_REGEX.lastIndex = 0;
+
+        if (linkMatch) {
+            const sourceTitle = linkMatch[1];
+            const sourceUrl = linkMatch[2];
+            const fact = bulletContent.replace(LINK_REGEX, '').trim().replace(/[，,。.、]+$/, '').trim() || sourceTitle;
+            LINK_REGEX.lastIndex = 0;
+
+            evidence.push({ fact, sourceTitle, sourceUrl });
+        } else if (bulletContent.length > 5) {
+            evidence.push({ fact: bulletContent, sourceTitle: '', sourceUrl: '' });
+        }
+    }
+
+    return evidence;
+}
+
+export const checkFacts = async (postContent: string): Promise<FactCheckResult> => {
     const baseUrl = import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434';
     const model = import.meta.env.VITE_OLLAMA_MODEL || 'llama3.1';
 
@@ -72,6 +146,7 @@ export const checkFacts = async (postContent: string): Promise<string> => {
 3. 回覆要簡短（200-400字內）
 4. 語氣中立友善
 5. **必須使用繁體中文撰寫所有回覆內容**
+6. **必須同時搜尋支持和反對貼文主張的證據**
 
 ## 超連結格式（非常重要！）
 你必須使用 Markdown 超連結格式：[顯示文字](完整網址)
@@ -87,20 +162,40 @@ export const checkFacts = async (postContent: string): Promise<string> => {
 2. 使用 [描述文字](url) 格式建立超連結
 3. 描述文字應該是來源名稱或事實描述
 
-## 回覆結構
-1. 開頭一句話回應核心問題（繁體中文）
-2. 用「•」條列 3-5 個關鍵事實，每個事實都要有 [文字](完整網址) 格式的連結
-3. 結尾一句話邀請讀者自行查證（繁體中文）
+## 搜尋策略
+你需要進行至少兩次搜尋：
+1. 第一次搜尋：查找支持貼文主張的證據
+2. 第二次搜尋：查找反對或質疑貼文主張的證據（加入「事實查核」「爭議」「反駁」等關鍵字）
+
+## 回覆結構（嚴格遵循此格式）
+你必須使用以下標記來組織回覆：
+
+[SUMMARY]
+一句話總結此貼文的核心主張及查核結論
+
+[SUPPORTING]
+• 支持貼文主張的事實1，附上 [來源名稱](完整網址)
+• 支持貼文主張的事實2，附上 [來源名稱](完整網址)
+
+[OPPOSING]
+• 反對或質疑貼文主張的事實1，附上 [來源名稱](完整網址)
+• 反對或質疑貼文主張的事實2，附上 [來源名稱](完整網址)
+
+[END]
+
+如果找不到支持或反對的證據，請在該區段寫「目前未找到相關證據」。
 
 你擁有 web_search 工具，可以用來搜尋即時資訊。請務必使用此工具來確保資訊的準確性。
 記住：所有回覆內容都必須使用繁體中文。`;
 
-    let messages = [
+    let messages: any[] = [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `請分析此貼文：\n\n${postContent}\n\n請用繁體中文搜尋相關資料後回覆。確保：
 1. 使用繁體中文撰寫所有內容
 2. 每個事實都使用 [描述文字](完整網址) 格式附上來源
-3. 從搜尋結果的 url 欄位中提取完整網址` }
+3. 從搜尋結果的 url 欄位中提取完整網址
+4. 必須搜尋支持和反對的證據
+5. 使用 [SUMMARY]、[SUPPORTING]、[OPPOSING]、[END] 標記組織回覆` }
     ];
 
     const tools = [
@@ -123,7 +218,7 @@ export const checkFacts = async (postContent: string): Promise<string> => {
         },
     ];
 
-    // Initial request to Ollama
+    // Phase 1: Initial request to Ollama
     console.log('🤖 [Ollama] Sending initial request to model:', model);
     let response = await fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
@@ -148,11 +243,11 @@ export const checkFacts = async (postContent: string): Promise<string> => {
         console.log(`🔧 [Ollama] Model requested ${message.tool_calls.length} tool call(s)`);
     }
 
-    // Handle tool calls loop (limited to 3 iterations to avoid infinite loops)
+    // Handle tool calls loop (limited to 5 iterations)
     let iterations = 0;
-    while (message.tool_calls && message.tool_calls.length > 0 && iterations < 3) {
+    while (message.tool_calls && message.tool_calls.length > 0 && iterations < 5) {
         iterations++;
-        console.log(`🔄 [FactChecker] Tool call iteration ${iterations}/3`);
+        console.log(`🔄 [FactChecker] Tool call iteration ${iterations}/5`);
         messages.push(message);
 
         for (const toolCall of message.tool_calls) {
@@ -218,8 +313,90 @@ ${i + 1}. 標題：${r.title}
         }
     }
 
-    console.log('🎉 [FactChecker] Fact check completed');
-    console.log('📄 [FactChecker] Response preview:', message.content.substring(0, 150) + (message.content.length > 150 ? '...' : ''));
+    console.log('📄 [FactChecker] Phase 1 complete, parsing response');
 
-    return message.content;
+    // Parse Phase 1 response
+    let result = parseFactCheckResponse(message.content);
+
+    // Phase 2: Counter-evidence search (if opposing evidence is sparse)
+    if (result.rawMarkdown === undefined && result.opposing.length < 2) {
+        console.log(`⚖️ [FactChecker] Phase 2: Only ${result.opposing.length} opposing item(s), searching for counter-evidence`);
+
+        try {
+            const counterQuery = `${postContent.substring(0, 100)} 事實查核 爭議 反駁`;
+            const searchResultsRaw = await performWebSearch(counterQuery);
+
+            const phase2Messages: any[] = [
+                {
+                    role: 'system',
+                    content: `你是事實查核助手。從以下搜尋結果中，找出反對或質疑原始貼文主張的事實。
+每個事實必須使用 [來源名稱](完整網址) 格式附上來源連結。
+只列出反對的證據，用「•」條列。必須使用繁體中文。`,
+                },
+                {
+                    role: 'user',
+                    content: `原始貼文：${postContent}\n\n搜尋結果：${searchResultsRaw}\n\n請列出反對或質疑此貼文主張的事實（每條都要附上來源連結）：`,
+                },
+            ];
+
+            const phase2Response = await fetch(`${baseUrl}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: model,
+                    messages: phase2Messages,
+                    stream: false,
+                }),
+            });
+
+            if (phase2Response.ok) {
+                const phase2Data = (await phase2Response.json()) as OllamaResponse;
+                const phase2Content = phase2Data.message.content;
+                const additionalOpposing = extractEvidenceFromBullets(phase2Content);
+
+                // Deduplicate by URL
+                const existingUrls = new Set(result.opposing.map(e => e.sourceUrl));
+                for (const item of additionalOpposing) {
+                    if (item.sourceUrl && !existingUrls.has(item.sourceUrl)) {
+                        result.opposing.push(item);
+                        existingUrls.add(item.sourceUrl);
+                    }
+                }
+
+                console.log(`✅ [FactChecker] Phase 2 added ${additionalOpposing.length} opposing item(s) after dedup`);
+            }
+        } catch (phase2Error) {
+            console.error('⚠️ [FactChecker] Phase 2 failed, continuing with Phase 1 results:', phase2Error);
+        }
+    }
+
+    console.log('🎉 [FactChecker] Fact check completed');
+    return result;
 };
+
+function extractEvidenceFromBullets(text: string): SourceEvidence[] {
+    const evidence: SourceEvidence[] = [];
+    const lines = text.split('\n');
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        const bulletContent = trimmed.replace(/^[•\-\d.]\s*/, '');
+        if (!bulletContent) continue;
+
+        const linkMatch = LINK_REGEX.exec(bulletContent);
+        LINK_REGEX.lastIndex = 0;
+
+        if (linkMatch) {
+            const sourceTitle = linkMatch[1];
+            const sourceUrl = linkMatch[2];
+            const fact = bulletContent.replace(LINK_REGEX, '').trim().replace(/[，,。.、]+$/, '').trim() || sourceTitle;
+            LINK_REGEX.lastIndex = 0;
+
+            evidence.push({ fact, sourceTitle, sourceUrl });
+        }
+    }
+
+    return evidence;
+}

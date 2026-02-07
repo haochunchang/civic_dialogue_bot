@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { checkFacts } from '../services/ollama';
+import type { FactCheckResult } from '../types';
 
 export const useFactChecker = () => {
-    const [response, setResponse] = useState<string | null>(null);
+    const [response, setResponse] = useState<FactCheckResult | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
